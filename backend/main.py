@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import create_engine, text
 from twilio.rest import Client as TwilioClient
 
-load_dotenv()
+load_dotenv(Path(__file__).with_name(".env"))
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 BACKEND_PUBLIC_URL = os.getenv("BACKEND_PUBLIC_URL", "http://127.0.0.1:16000").rstrip("/")
 FRONTEND_PUBLIC_URL = os.getenv("FRONTEND_PUBLIC_URL", "http://127.0.0.1:15000").rstrip("/")
