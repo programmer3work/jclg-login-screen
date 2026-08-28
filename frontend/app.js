@@ -45,6 +45,11 @@ async function loadRoles() {
     app.innerHTML = `<div class="eyebrow">STEP 03 OF 03</div><h1>Select your role</h1><p class="lead">Choose the workspace assigned to you. You will land there immediately.</p><div class="completed-step"><span>✓</span><div><strong>Mobile number verified</strong><small>Your secure login is ready</small></div></div><form id="roleForm"><label for="roleSelect">Select your JCLG role</label><select id="roleSelect" name="role_id" required><option value="">Choose a role</option>${result.roles.map((role) => `<option value="${role.role_id}">${role.role_name}</option>`).join("")}</select><p class="field-hint">Your available roles are managed by JCLG access policy.</p><button class="primary">Open my workspace <span>→</span></button></form>`;
     document.querySelector("#roleForm").onsubmit = async (event) => { event.preventDefault(); const selected = await post("/api/auth/role", { role_id: Number(new FormData(event.target).get("role_id") || document.querySelector("#roleSelect").value) }); if (selected) renderLanding(selected.role, selected.landing_path); };
 }
+async function loadRolePath(roleCode) {
+    const result = await request("/api/auth/roles");
+    const role = result?.roles.find((item) => item.role_code.toLowerCase() === roleCode);
+    if (role) renderLanding(role, `/role/${roleCode}`); else renderLogin();
+}
 function renderLanding(role, path) {
     setStep(3);
     history.pushState({ role: role.role_code }, "", path);
@@ -52,4 +57,5 @@ function renderLanding(role, path) {
     document.querySelector("#logout").onclick = () => post("/api/auth/logout").then(() => renderLogin());
 }
 const initialStep = new URLSearchParams(location.search).get("step");
-if (initialStep === "phone") renderPhone(); else renderLogin();
+const rolePath = location.pathname.match(/^\/role\/([^/]+)\/?$/);
+if (initialStep === "phone") renderPhone(); else if (rolePath) loadRolePath(rolePath[1].toLowerCase()); else renderLogin();
