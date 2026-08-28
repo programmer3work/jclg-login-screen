@@ -136,6 +136,10 @@ SELECT role_id, module_code, module_name FROM jclg_role CROSS JOIN (VALUES
 ('REPORTS_COMMUNICATION', 'AI Reports & Communication')
 ) AS module_list(module_code, module_name)
 ON CONFLICT (role_id, module_code) DO NOTHING;
+INSERT INTO jclg_user_role (user_id, role_id, is_primary)
+SELECT 2, role_id, FALSE FROM jclg_role
+WHERE role_code IN ('ADMIN', 'PRINCIPAL', 'FACULTY', 'PARENT')
+ON CONFLICT (user_id, role_id) DO NOTHING;
 INSERT INTO jclg_auth_provider (provider_code, provider_name, issuer_url)
 VALUES ('GOOGLE', 'Google', 'https://accounts.google.com')
 ON CONFLICT (provider_code) DO NOTHING;
