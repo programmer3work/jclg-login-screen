@@ -3,7 +3,11 @@ const app = document.querySelector("#app");
 const error = document.querySelector("#error");
 const bar = document.querySelector("#bar");
 
-function setStep(number) { bar.style.width = `${number * 33.333}%`; }
+function setStep(number) {
+    if (bar) {
+        bar.style.width = `${number * 33.333}%`;
+    }
+}
 function showError(message = "") { error.textContent = message; }
 async function request(path, options = {}) {
     try {
