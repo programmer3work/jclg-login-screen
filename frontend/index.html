@@ -7,21 +7,33 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style.css?v=20260829-1">
     <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
-<main class="shell">
-    <a class="brand" href="/" aria-label="JCLG home"><img src="jclg-logo.svg" alt="JCLG"></a>
-    <section class="card">
-        <div class="meta"><span>JCLG ACCESS</span><span>SECURE LOGIN</span></div>
-        <div class="track"><i id="bar"></i></div>
-        <div id="app"></div>
-        <p id="error" role="alert"></p>
+<main class="split-shell">
+    <section class="campus-panel" aria-label="JCLG campus preview">
+        <div class="campus-art">
+            <img id="campus-image" src="" alt="JCLG campus reference image">
+        </div>
     </section>
-    <footer>JCLG Student Analysis <span>Day Scholar Platform</span></footer>
+
+    <aside class="login-panel">
+        <div class="login-card">
+            <h1 class="login-title">JCLG Initial Login</h1>
+            <p class="subtitle">One initial login only</p>
+            <div id="app"></div>
+            <p id="error" role="alert"></p>
+        </div>
+    </aside>
 </main>
 <script src="config.js"></script>
+<script>
+    const campusImage = document.getElementById('campus-image');
+    if (campusImage) {
+        campusImage.src = window.JCLG_CONFIG?.campusImage || 'assets/jclg-campus-reference.jpg';
+    }
+</script>
 <script src="app.js"></script>
 </body>
 </html>
