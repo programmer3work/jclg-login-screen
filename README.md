@@ -4,7 +4,7 @@ Initial-login-only implementation for JCLG: Google Identity Services sign-in, di
 
 ## Local setup
 
-1. Create PostgreSQL database `jclg_ai_student_analysis`. For AWS RDS, set `DATABASE_URL` to the RDS PostgreSQL endpoint, for example `postgresql+psycopg://USER:PASSWORD@RDS_ENDPOINT:5432/DATABASE?sslmode=require`. The endpoint, username, password, and security-group access are deployment secrets and are not available to embed in this project.
+1. Create a dedicated PostgreSQL database for this module named `jclg_initial_login_local` on your local machine. Do not reuse or point this module at the AI Student Analysis database. For AWS RDS, set `DATABASE_URL` to the RDS PostgreSQL endpoint for this module only, for example `postgresql+psycopg://USER:PASSWORD@RDS_ENDPOINT:5432/jclg_initial_login_local?sslmode=require`. The endpoint, username, password, and security-group access are deployment secrets and are not available to embed in this project.
 2. In `backend`, create `.env` from `.env.example` and set the database URL, Google Client ID, Twilio Account SID/Auth Token/sender phone number, and a random `SESSION_SECRET`.
 3. In Google Cloud, create a **Web application** OAuth Client ID. Add `http://127.0.0.1:15000` and `http://localhost:15000` under Authorized JavaScript origins, configure the OAuth consent screen, and add your Google account as a test user. Google Identity Services uses the Client ID in the browser; no Google Client Secret is required.
 4. Confirm the Client ID in `backend/.env` belongs to that Web application. If Google shows `Error 401: invalid_client` or `The given client ID is not found`, the ID must be replaced by the Google project administrator; code changes cannot repair a deleted or wrong-project Client ID.
