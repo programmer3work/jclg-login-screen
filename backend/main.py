@@ -22,7 +22,7 @@ SESSION_SECRET = os.getenv("SESSION_SECRET", "")
 SESSION_DURATION_MINUTES = int(os.getenv("SESSION_DURATION_MINUTES", "30"))
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 GOOGLE_SCOPES = os.getenv("GOOGLE_SCOPES", "openid email profile")
-AUTO_ASSIGN_ROLE_CODES = [code.strip().upper() for code in os.getenv("AUTO_ASSIGN_ROLE_CODES", "STUDENT").split(",") if code.strip()]
+AUTO_ASSIGN_ROLE_CODES = [code.strip().upper() for code in os.getenv("AUTO_ASSIGN_ROLE_CODES", "ADMIN,PRINCIPAL,FACULTY,STUDENT,PARENT").split(",") if code.strip()]
 ALLOWED_FRONTEND_ORIGINS = [FRONTEND_PUBLIC_URL]
 if FRONTEND_PUBLIC_URL == "http://127.0.0.1:15000":
     ALLOWED_FRONTEND_ORIGINS.append("http://localhost:15000")
@@ -53,6 +53,11 @@ class ModuleRequest(BaseModel):
 def require_db():
     if engine is None:
         raise HTTPException(503, "DATABASE_URL is not configured")
+    try:
+        with engine.connect() as db:
+            db.execute(text("SELECT 1"))
+    except Exception as exc:
+        raise HTTPException(503, "Database service unavailable. Check the PostgreSQL connection and security settings.") from exc
     return engine
 
 def hash_token(value):
@@ -84,9 +89,13 @@ def otp_hash(session_id, code):
 
 @app.on_event("startup")
 def initialize_schema():
-    if engine:
+    if not engine:
+        return
+    try:
         with engine.begin() as db:
             db.exec_driver_sql(schema_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        print(f"Database initialization skipped at startup: {exc}")
 
 @app.get("/")
 def root():
@@ -98,8 +107,10 @@ def health():
         with require_db().connect() as db:
             db.execute(text("SELECT 1"))
         return {"status": "healthy", "database": "connected"}
+    except HTTPException as exc:
+        return JSONResponse(status_code=503, content={"status": "unhealthy", "database": "disconnected", "error": exc.detail})
     except Exception as exc:
-        return {"status": "unhealthy", "database": "disconnected", "error": str(exc)}
+        return JSONResponse(status_code=503, content={"status": "unhealthy", "database": "disconnected", "error": str(exc)})
 
 @app.get("/api/config")
 def public_config():
@@ -182,18 +193,18 @@ def roles(jclg_session: str | None = Cookie(default=None)):
     if not session["phone_verified_at"]:
         raise HTTPException(403, "Verify your phone number first")
     with require_db().connect() as db:
-        rows = db.execute(text("SELECT r.role_id,r.role_code,r.role_name FROM jclg_role r JOIN jclg_user_role ur ON ur.role_id=r.role_id WHERE ur.user_id=:user_id AND ur.status=TRUE AND r.status=TRUE ORDER BY r.role_name"), session).mappings().all()
+        rows = db.execute(text("SELECT role_id, role_code, role_name FROM jclg_role WHERE status=TRUE ORDER BY role_name")).mappings().all()
     return {"roles": [dict(row) for row in rows]}
 
 @app.post("/api/auth/role")
 def select_role(payload: RoleRequest, jclg_session: str | None = Cookie(default=None)):
     session = session_from_cookie(jclg_session)
     with require_db().begin() as db:
-        allowed = db.execute(text("SELECT 1 FROM jclg_user_role WHERE user_id=:user_id AND role_id=:role_id AND status=TRUE"), {"user_id": session["user_id"], "role_id": payload.role_id}).scalar_one_or_none()
+        allowed = db.execute(text("SELECT 1 FROM jclg_role WHERE role_id=:role_id AND status=TRUE"), {"role_id": payload.role_id}).scalar_one_or_none()
         if not allowed:
-            raise HTTPException(403, "Role is not assigned to this account")
+            raise HTTPException(403, "Role is not available for this account")
         db.execute(text("UPDATE jclg_login_session SET selected_role_id=:role_id WHERE session_id=:session_id"), {"role_id": payload.role_id, "session_id": session["session_id"]})
-        role = db.execute(text("SELECT role_code,role_name FROM jclg_role WHERE role_id=:role_id"), payload.model_dump()).mappings().one()
+        role = db.execute(text("SELECT role_code, role_name FROM jclg_role WHERE role_id=:role_id"), {"role_id": payload.role_id}).mappings().one()
     return {"status": "selected", "role": dict(role), "landing_path": f"/role/{role['role_code'].lower()}"}
 
 @app.post("/api/auth/logout")

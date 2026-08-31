@@ -125,6 +125,9 @@ INSERT INTO jclg_role (role_code, role_name, description) VALUES
 ('STUDENT', 'Student', 'Day scholar student'),
 ('PARENT', 'Parent', 'Student parent or guardian')
 ON CONFLICT (role_code) DO NOTHING;
+INSERT INTO jclg_user (username, first_name, email, phone)
+VALUES ('gowrigowtham2016@gmail.com', 'User', 'gowrigowtham2016@gmail.com', '+918639780124')
+ON CONFLICT (email) DO UPDATE SET phone = EXCLUDED.phone, updated_at = CURRENT_TIMESTAMP;
 INSERT INTO jclg_role_module (role_id, module_code, module_name)
 SELECT role_id, module_code, module_name FROM jclg_role CROSS JOIN (VALUES
 ('STUDENT_PROFILE', 'Student Profile & Day Scholar'),
@@ -136,13 +139,6 @@ SELECT role_id, module_code, module_name FROM jclg_role CROSS JOIN (VALUES
 ('REPORTS_COMMUNICATION', 'AI Reports & Communication')
 ) AS module_list(module_code, module_name)
 ON CONFLICT (role_id, module_code) DO NOTHING;
-INSERT INTO jclg_user_role (user_id, role_id, is_primary)
-SELECT 2, role_id, FALSE FROM jclg_role
-WHERE role_code IN ('ADMIN', 'PRINCIPAL', 'FACULTY', 'PARENT')
-ON CONFLICT (user_id, role_id) DO NOTHING;
-INSERT INTO jclg_user (username, first_name, email, phone)
-VALUES ('gowrigowtham2016@gmail.com', 'User', 'gowrigowtham2016@gmail.com', '+918639780124')
-ON CONFLICT (email) DO UPDATE SET phone = EXCLUDED.phone, updated_at = CURRENT_TIMESTAMP;
 INSERT INTO jclg_user_role (user_id, role_id, is_primary)
 SELECT u.user_id, r.role_id, r.role_code = 'ADMIN'
 FROM jclg_user u CROSS JOIN jclg_role r
