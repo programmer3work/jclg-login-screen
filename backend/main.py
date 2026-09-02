@@ -138,27 +138,161 @@ async def google_token(request: Request, payload: GoogleCredential):
         for role_code in AUTO_ASSIGN_ROLE_CODES:
             db.execute(text("""INSERT INTO jclg_user_role(user_id,role_id,is_primary) SELECT :user_id,role_id,:is_primary FROM jclg_role WHERE role_code=:role_code ON CONFLICT(user_id,role_id) DO NOTHING"""), {"user_id": user_id, "role_code": role_code, "is_primary": role_code == AUTO_ASSIGN_ROLE_CODES[0]})
         db.execute(text("INSERT INTO jclg_login_audit(user_id,auth_provider_id,session_id,event_type,ip_address,user_agent) VALUES(:user,:provider,:session,'GOOGLE_LOGIN',CAST(:ip AS INET),:agent)"), {"user": user_id, "provider": provider_id, "session": session_id, "ip": client_ip(request), "agent": request.headers.get("user-agent")})
-    response = JSONResponse({"next": f"{FRONTEND_PUBLIC_URL}/?step=phone"})
+    response = JSONResponse({"status": "authenticated","next": f"{FRONTEND_PUBLIC_URL}/?step=role"})
     set_cookie(response, raw_token)
     return response
 
 @app.post("/api/auth/otp/request")
-def request_otp(payload: PhoneRequest, jclg_session: str | None = Cookie(default=None)):
-    session = session_from_cookie(jclg_session)
-    account_sid, auth_token, from_number = os.getenv("TWILIO_ACCOUNT_SID"), os.getenv("TWILIO_AUTH_TOKEN"), os.getenv("TWILIO_PHONE_NUMBER")
+def request_otp(request: Request, payload: PhoneRequest):
+    if not SESSION_SECRET:
+        raise HTTPException(503, "SESSION_SECRET is not configured")
+
+    account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+    auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+    from_number = os.getenv("TWILIO_PHONE_NUMBER")
+
     if not all((account_sid, auth_token, from_number)):
-        raise HTTPException(503, "Twilio Account SID, Auth Token, and phone number are not configured")
-    code = f"{secrets.randbelow(1000000):06d}"
-    expiry = datetime.now(timezone.utc) + timedelta(minutes=int(os.getenv("OTP_EXPIRY_MINUTES", "5")))
-    try:
-        TwilioClient(account_sid, auth_token).messages.create(to=payload.phone, from_=from_number, body=f"JCLG verification code: {code}. It expires in {os.getenv('OTP_EXPIRY_MINUTES', '5')} minutes.")
-    except Exception as exc:
-        raise HTTPException(502, "Unable to send OTP") from exc
+        raise HTTPException(
+            503,
+            "Twilio Account SID, Auth Token, and phone number are not configured"
+        )
+
+    # Find the JCLG user by mobile number
     with require_db().begin() as db:
-        db.execute(text("UPDATE jclg_user SET phone=:phone,updated_at=CURRENT_TIMESTAMP WHERE user_id=:user_id"), {"phone": payload.phone, "user_id": session["user_id"]})
-        db.execute(text("UPDATE jclg_login_otp SET consumed_at=CURRENT_TIMESTAMP WHERE session_id=:session_id AND consumed_at IS NULL"), session)
-        db.execute(text("INSERT INTO jclg_login_otp(session_id,phone,code_hash,expires_at) VALUES(:session_id,:phone,:code_hash,:expires_at)"), {"session_id": session["session_id"], "phone": payload.phone, "code_hash": otp_hash(session["session_id"], code), "expires_at": expiry})
-    return {"status": "pending"}
+        user = db.execute(
+            text("""
+                SELECT user_id
+                FROM jclg_user
+                WHERE phone = :phone
+            """),
+            {"phone": payload.phone}
+        ).mappings().first()
+
+    if not user:
+        raise HTTPException(
+            401,
+            "Mobile number is not registered with JCLG"
+        )
+
+    # Create independent OTP login session
+    raw_token = secrets.token_urlsafe(48)
+
+    expires = datetime.now(timezone.utc) + timedelta(
+        minutes=SESSION_DURATION_MINUTES
+    )
+
+    with require_db().begin() as db:
+        session_id = db.execute(
+            text("""
+                INSERT INTO jclg_login_session
+                (
+                    user_id,
+                    session_token_hash,
+                    ip_address,
+                    user_agent,
+                    last_activity_at,
+                    expires_at
+                )
+                VALUES
+                (
+                    :user_id,
+                    :token_hash,
+                    CAST(:ip AS INET),
+                    :agent,
+                    CURRENT_TIMESTAMP,
+                    :expires
+                )
+                RETURNING session_id
+            """),
+            {
+                "user_id": user["user_id"],
+                "token_hash": hash_token(raw_token),
+                "ip": client_ip(request),
+                "agent": request.headers.get("user-agent"),
+                "expires": expires
+            }
+        ).scalar_one()
+
+    # Generate OTP
+    code = f"{secrets.randbelow(1000000):06d}"
+
+    otp_expiry_minutes = int(
+        os.getenv("OTP_EXPIRY_MINUTES", "5")
+    )
+
+    otp_expiry = datetime.now(timezone.utc) + timedelta(
+        minutes=otp_expiry_minutes
+    )
+
+    # Send OTP through Twilio
+    try:
+        TwilioClient(
+            account_sid,
+            auth_token
+        ).messages.create(
+            to=payload.phone,
+            from_=from_number,
+            body=(
+                f"JCLG verification code: {code}. "
+                f"It expires in {otp_expiry_minutes} minutes."
+            )
+        )
+
+    except Exception as exc:
+        print("TWILIO OTP ERROR:", repr(exc))
+
+        # Remove the temporary session if SMS failed
+        with require_db().begin() as db:
+            db.execute(
+                text("""
+                    UPDATE jclg_login_session
+                    SET is_active = FALSE,
+                        revoked_at = CURRENT_TIMESTAMP
+                    WHERE session_id = :session_id
+                """),
+                {"session_id": session_id}
+            )
+
+        raise HTTPException(
+            502,
+            f"Unable to send OTP: {exc}"
+        ) from exc
+
+    # Store OTP
+    with require_db().begin() as db:
+        db.execute(
+            text("""
+                INSERT INTO jclg_login_otp
+                (
+                    session_id,
+                    phone,
+                    code_hash,
+                    expires_at
+                )
+                VALUES
+                (
+                    :session_id,
+                    :phone,
+                    :code_hash,
+                    :expires_at
+                )
+            """),
+            {
+                "session_id": session_id,
+                "phone": payload.phone,
+                "code_hash": otp_hash(session_id, code),
+                "expires_at": otp_expiry
+            }
+        )
+
+    # Give browser the OTP-login session
+    response = JSONResponse({
+        "status": "pending"
+    })
+
+    set_cookie(response, raw_token)
+
+    return response
 
 @app.post("/api/auth/otp/verify")
 def verify_otp(payload: CodeRequest, jclg_session: str | None = Cookie(default=None)):
@@ -179,12 +313,39 @@ def verify_otp(payload: CodeRequest, jclg_session: str | None = Cookie(default=N
 @app.get("/api/auth/roles")
 def roles(jclg_session: str | None = Cookie(default=None)):
     session = session_from_cookie(jclg_session)
-    if not session["phone_verified_at"]:
-        raise HTTPException(403, "Verify your phone number first")
     with require_db().connect() as db:
         rows = db.execute(text("SELECT r.role_id,r.role_code,r.role_name FROM jclg_role r JOIN jclg_user_role ur ON ur.role_id=r.role_id WHERE ur.user_id=:user_id AND ur.status=TRUE AND r.status=TRUE ORDER BY r.role_name"), session).mappings().all()
     return {"roles": [dict(row) for row in rows]}
+@app.get("/api/auth/modules")
+def modules(jclg_session: str | None = Cookie(default=None)):
+    session = session_from_cookie(jclg_session)
 
+    if not session["selected_role_id"]:
+        raise HTTPException(403, "Select a role first")
+
+    with require_db().connect() as db:
+        rows = db.execute(
+            text("""
+                SELECT
+                    role_module_id,
+                    module_code,
+                    module_name,
+                    can_view,
+                    can_create,
+                    can_update,
+                    can_delete
+                FROM jclg_role_module
+                WHERE role_id = :role_id
+                  AND status = TRUE
+                  AND can_view = TRUE
+                ORDER BY module_code
+            """),
+            {"role_id": session["selected_role_id"]}
+        ).mappings().all()
+
+    return {
+        "modules": [dict(row) for row in rows]
+    }
 @app.post("/api/auth/role")
 def select_role(payload: RoleRequest, jclg_session: str | None = Cookie(default=None)):
     session = session_from_cookie(jclg_session)
